@@ -1,0 +1,5 @@
+namespace db {
+  class Random {
+    
+  };
+}
