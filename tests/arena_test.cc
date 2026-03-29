@@ -1,12 +1,12 @@
 #include "util/arena.h"
 
-#include "gtest/gtest.h"
-#include "util/random.h"
-
 #include <cstddef>
 #include <cstdint>
 #include <utility>
 #include <vector>
+
+#include "gtest/gtest.h"
+#include "util/random.h"
 
 namespace db {
 
