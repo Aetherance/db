@@ -8,6 +8,7 @@ project(
 )
 
 include(CTest)
+include(GoogleTest)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -51,6 +52,8 @@ file(
   "${DB_SOURCE_DIR}/*.cxx"
 )
 
+list(FILTER DB_LIBRARY_SOURCES EXCLUDE REGEX ".*/.*_test\\.(cc|cpp|cxx)$")
+
 file(
   GLOB_RECURSE DB_PUBLIC_HEADERS
   CONFIGURE_DEPENDS
@@ -86,6 +89,8 @@ else()
 endif()
 
 if(BUILD_TESTING AND TARGET db)
+  find_package(GTest REQUIRED)
+
   file(
     GLOB DB_TEST_SOURCES
     CONFIGURE_DEPENDS
@@ -97,11 +102,15 @@ if(BUILD_TESTING AND TARGET db)
   foreach(test_source IN LISTS DB_TEST_SOURCES)
     get_filename_component(test_name "${test_source}" NAME_WE)
     add_executable("${test_name}" "${test_source}")
-    target_link_libraries("${test_name}" PRIVATE db)
-    target_include_directories("${test_name}" PRIVATE "${DB_SOURCE_DIR}")
+    target_link_libraries("${test_name}" PRIVATE db GTest::gtest GTest::gtest_main)
+    target_include_directories(
+      "${test_name}"
+      PRIVATE
+        "${DB_SOURCE_DIR}"
+    )
     target_compile_features("${test_name}" PRIVATE cxx_std_20)
     db_enable_warnings("${test_name}")
-    add_test(NAME "${test_name}" COMMAND "${test_name}")
+    gtest_discover_tests("${test_name}")
   endforeach()
 endif()
 
