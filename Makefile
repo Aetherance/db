@@ -1,6 +1,6 @@
 SHELL := bash
 
-.PHONY: help configure build test ci-test fmt check
+.PHONY: help configure build test ci-test fmt fmt-check check
 
 help:
 	@echo "Available targets:"
@@ -9,7 +9,8 @@ help:
 	@echo "  make test       - Run gtest binaries directly"
 	@echo "  make ci-test    - Run tests via CTest with the dev preset"
 	@echo "  make fmt        - Format C/C++ sources with clang-format"
-	@echo "  make check      - Run fmt, build, and ci-test"
+	@echo "  make fmt-check  - Verify C/C++ formatting with clang-format"
+	@echo "  make check      - Run fmt-check, build, and ci-test"
 
 configure:
 	cmake --preset dev
@@ -62,7 +63,32 @@ fmt:
 	clang-format -i "$${files[@]}"; \
 	echo "Formatted $${#files[@]} file(s)."
 
+fmt-check:
+	@command -v clang-format >/dev/null 2>&1 || { echo "clang-format not found in PATH." >&2; exit 1; }
+	@set -euo pipefail; \
+	files=(); \
+	for dir in include src tests examples benchmarks tools; do \
+	  [ -d "$$dir" ] || continue; \
+	  while IFS= read -r -d '' file; do \
+	    files+=("$$file"); \
+	  done < <(find "$$dir" -type f \( \
+	    -name '*.c' -o \
+	    -name '*.cc' -o \
+	    -name '*.cpp' -o \
+	    -name '*.cxx' -o \
+	    -name '*.h' -o \
+	    -name '*.hh' -o \
+	    -name '*.hpp' \
+	  \) -print0); \
+	done; \
+	if [ "$${#files[@]}" -eq 0 ]; then \
+	  echo "No C/C++ source files found to check."; \
+	  exit 0; \
+	fi; \
+	clang-format --dry-run --Werror "$${files[@]}"; \
+	echo "Formatting check passed for $${#files[@]} file(s)."
+
 check:
-	$(MAKE) fmt
+	$(MAKE) fmt-check
 	$(MAKE) build
 	$(MAKE) ci-test
