@@ -1,14 +1,15 @@
 SHELL := bash
 
-.PHONY: help configure build test fmt check
+.PHONY: help configure build test ci-test fmt check
 
 help:
 	@echo "Available targets:"
 	@echo "  make configure  - Configure CMake with the dev preset"
 	@echo "  make build      - Build with the dev preset"
-	@echo "  make test       - Run tests from the dev preset"
+	@echo "  make test       - Run gtest binaries directly"
+	@echo "  make ci-test    - Run tests via CTest with the dev preset"
 	@echo "  make fmt        - Format C/C++ sources with clang-format"
-	@echo "  make check      - Run fmt, build, and test"
+	@echo "  make check      - Run fmt, build, and ci-test"
 
 configure:
 	cmake --preset dev
@@ -19,6 +20,21 @@ build: configure
 	cmake --build --preset dev
 
 test: build
+	@set -euo pipefail; \
+	shopt -s nullglob; \
+	tests=(build/*_test); \
+	if [ "$${#tests[@]}" -eq 0 ]; then \
+	  echo "No gtest binaries found under build/." >&2; \
+	  exit 1; \
+	fi; \
+	IFS=$$'\n' tests=($$(printf '%s\n' "$${tests[@]}" | sort)); \
+	unset IFS; \
+	for test_bin in "$${tests[@]}"; do \
+	  echo "==> Running $$test_bin"; \
+	  "$$test_bin" --gtest_color=yes; \
+	done
+
+ci-test: build
 	ctest --preset dev
 
 fmt:
@@ -49,4 +65,4 @@ fmt:
 check:
 	$(MAKE) fmt
 	$(MAKE) build
-	$(MAKE) test
+	$(MAKE) ci-test
