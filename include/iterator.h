@@ -55,6 +55,7 @@ private:
     CleanupNode* next;
   };
 
+  // only when need >1 count of cleanup uses .next
   CleanupNode cleanup_head_;
 };
 
