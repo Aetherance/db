@@ -42,9 +42,7 @@ protected:
     table_->Unref();
   }
 
-  void Add(SequenceNumber sequence,
-           ValueType type,
-           const std::string& user_key,
+  void Add(SequenceNumber sequence, ValueType type, const std::string& user_key,
            const std::string& value = "") {
     table_->Add(sequence, type, Slice(user_key), Slice(value));
   }

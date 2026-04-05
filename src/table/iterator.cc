@@ -1,6 +1,7 @@
 #include "iterator.h"
 
 #include <cassert>
+
 #include "slice.h"
 #include "status.h"
 
@@ -41,32 +42,43 @@ namespace {
 class EmptyIterator : public Iterator {
 public:
   EmptyIterator(const Status& s) : status_(s) {}
-	~EmptyIterator() override = default;
+  ~EmptyIterator() override = default;
 
-	bool Valid() const override { return false; }
-	void Seek(const Slice& target) override {}
-	void SeekToFirst() override {}
-	void SeekToLast() override {}
-	void Next() override { assert(false); }
-	void Prev() override { assert(false); }
-	Slice Key() const override {
-		assert(false);
-		return Slice();
-	}
-	Slice Value() const override {
-		assert(false);
-		return Slice();
-	}
-	Status GetStatus() const override { return status_; }
+  bool Valid() const override {
+    return false;
+  }
+  void Seek(const Slice& target) override {}
+  void SeekToFirst() override {}
+  void SeekToLast() override {}
+  void Next() override {
+    assert(false);
+  }
+  void Prev() override {
+    assert(false);
+  }
+  Slice Key() const override {
+    assert(false);
+    return Slice();
+  }
+  Slice Value() const override {
+    assert(false);
+    return Slice();
+  }
+  Status GetStatus() const override {
+    return status_;
+  }
+
 private:
-	Status status_;
+  Status status_;
 };
 }  // namespace
 
-Iterator* NewEmptyIterator() { return new EmptyIterator(Status::OkStatus()); }
+Iterator* NewEmptyIterator() {
+  return new EmptyIterator(Status::OkStatus());
+}
 
 Iterator* NewErrorIterator(const Status& status) {
-	return new EmptyIterator(status);
+  return new EmptyIterator(status);
 }
 
 }  // namespace db

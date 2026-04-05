@@ -68,7 +68,8 @@ TEST(DbFormatTest, LookupKeyEncodesMemtableAndInternalViews) {
 
   uint32_t internal_key_size = 0;
   Slice memtable_key = lookup.memtable_key();
-  const char* parsed = GetVarint32Ptr(memtable_key.Data(), memtable_key.Data() + 5, &internal_key_size);
+  const char* parsed =
+      GetVarint32Ptr(memtable_key.Data(), memtable_key.Data() + 5, &internal_key_size);
   ASSERT_NE(nullptr, parsed);
   EXPECT_EQ(lookup.internal_key().Size(), internal_key_size);
   EXPECT_EQ(lookup.internal_key().Data(), parsed);
