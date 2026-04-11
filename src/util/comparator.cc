@@ -1,6 +1,10 @@
 #include "comparator.h"
 
+#include <sys/types.h>
+
+#include <cassert>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 
 #include "util/no_destructor.h"
@@ -24,7 +28,25 @@ public:
   }
 
   void FindShortestSeparator(std::string* start, const Slice& limit) const override {
-    // TODO: implement me
+    size_t min_length = std::min(start->size(), limit.Size());
+    size_t diff_index = 0;
+    while ((diff_index < min_length) && ((*start)[diff_index] == limit[diff_index])) {
+      diff_index++;
+    }
+
+    if (diff_index >= min_length) {
+      // start is limit's prefix or limit is start's prefix
+      // do not shorten at these situations
+    } else {
+      // shorten
+      uint8_t diff_type = static_cast<uint8_t>((*start)[diff_index]);
+      if (diff_type < static_cast<uint8_t>(0xff) &&
+          diff_type + 1 < static_cast<uint8_t>(limit[diff_index])) {
+        (*start)[diff_index]++;
+        start->resize(diff_index + 1);
+        assert(Compare(*start, limit) < 0);
+      }
+    }
   }
 
   void FindShortSuccessor(std::string* key) const override {

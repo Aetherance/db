@@ -63,13 +63,18 @@ int InternalKeyComparator::Compare(const Slice& akey, const Slice& bkey) const {
   return r;
 }
 
+// make internalKey shorter and bigger than the old key, but not bigger than limit
 void InternalKeyComparator::FindShortestSeparator(std::string* start, const Slice& limit) const {
-  // Slice user_start = ExtractUserKey(*start);
-  // Slice user_limit = ExtractUserKey(limit);
-  // std::string tmp(user_start.Data(), user_start.Size());
-  // user_comparator_->FindShortestSeparator(&tmp, user_limit);
-
-  // TODO: implement me
+  Slice user_start = ExtractUserKey((*start));
+  Slice user_limit = ExtractUserKey(limit);
+  std::string tmp(user_start.Data(), user_start.Size());
+  user_comparator_->FindShortestSeparator(&tmp, user_limit);
+  if (tmp.size() < user_start.Size() && user_comparator_->Compare(user_start, tmp) < 0) {
+    PutFixed64(&tmp, PackSequenceAndType(kMaxSequenceNumber, kValueTypeForSeek));
+    assert(this->Compare(*start, tmp) < 0);
+    assert(this->Compare(tmp, limit) < 0);
+    start->swap(tmp);
+  }
 }
 
 void InternalKeyComparator::FindShortSuccessor(std::string* key) const {
