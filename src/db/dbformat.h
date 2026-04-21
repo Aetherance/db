@@ -4,6 +4,7 @@
 #include <string>
 
 #include "comparator.h"
+#include "filter_policy.h"
 #include "slice.h"
 #include "util/coding.h"
 
@@ -74,7 +75,16 @@ public:
   int Compare(const InternalKey& a, const InternalKey& b) const;
 };
 
-// TODO: class InternalFilterPolicy
+class InternalFilterPolicy : public FilterPolicy {
+private:
+  const FilterPolicy* const user_policy_;
+
+public:
+  explicit InternalFilterPolicy(const FilterPolicy* p) : user_policy_(p) {}
+  const char* Name() const override;
+  void CreateFilter(const Slice* keys, int n, std::string* dst) const override;
+  bool KeyMayMatch(const Slice& key, const Slice& filter) const override;
+};
 
 class InternalKey {
 private:

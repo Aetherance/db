@@ -12,6 +12,7 @@
 #include "slice.h"
 #include "status.h"
 #include "table/block_builder.h"
+#include "table/filter_block.h"
 #include "util/coding.h"
 #include "util/crc32c.h"
 
@@ -52,6 +53,8 @@ struct TableBuilder::Rep {
         index_block(&index_block_options),
         num_entries(0),
         closed(false),
+        filter_block(opt.filter_policy == nullptr ? nullptr
+                                                  : new FilterBlockBuilder(opt.filter_policy)),
         pending_index_entry(false) {
     // for index block, depression is disabled.
     index_block_options.block_restart_interval = 1;
@@ -67,7 +70,7 @@ struct TableBuilder::Rep {
   std::string last_key;
   int64_t num_entries;
   bool closed;
-  // TODO: filter block
+  FilterBlockBuilder* filter_block;
 
   bool pending_index_entry;
   BlockHandle pending_handle;
@@ -77,12 +80,14 @@ struct TableBuilder::Rep {
 
 TableBuilder::TableBuilder(const Options& options, WritableFile* file)
     : rep_(new Rep(options, file)) {
-  // TODO: add filter block
+  if (rep_->filter_block != nullptr) {
+    rep_->filter_block->StartBlock(0);
+  }
 }
 
 TableBuilder::~TableBuilder() {
   assert(rep_->closed);
-  // TODO: add filter block
+  delete rep_->filter_block;
   delete rep_;
 }
 
@@ -117,7 +122,9 @@ void TableBuilder::Add(const Slice& key, const Slice& value) {
     r->pending_index_entry = false;
   }
 
-  // TODO: Filter Block
+  if (r->filter_block != nullptr) {
+    r->filter_block->AddKey(key);
+  }
 
   r->last_key.assign(key.Data(), key.Size());
   r->num_entries++;
@@ -141,7 +148,9 @@ void TableBuilder::Flush() {
     r->pending_index_entry = true;
     r->status = r->file->Flush();
   }
-  // filter block
+  if (r->filter_block != nullptr) {
+    r->filter_block->StartBlock(r->offset);
+  }
 }
 
 void TableBuilder::WriteBlock(BlockBuilder* block, BlockHandle* handle) {
@@ -220,8 +229,26 @@ Status TableBuilder::Finish() {
 
   BlockHandle filter_block_handle, metaindex_block_handle, index_block_handle;
 
-  // filter
+  // Filter
+  if (ok() && r->filter_block != nullptr) {
+    WriteRawBlock(r->filter_block->Finish(), kNoCompression, &filter_block_handle);
+  }
 
+  // MetaIndex
+  if (ok()) {
+    BlockBuilder meta_index_block(&r->options);
+    if (r->filter_block != nullptr) {
+      std::string key = "filter.";
+      key.append(r->options.filter_policy->Name());
+      std::string handle_encoding;
+      filter_block_handle.EncodeTo(&handle_encoding);
+      meta_index_block.Add(key, handle_encoding);
+    }
+
+    WriteBlock(&meta_index_block, &metaindex_block_handle);
+  }
+
+  // Index
   if (ok()) {
     if (r->pending_index_entry) {
       r->options.comparator->FindShortSuccessor(&r->last_key);
@@ -233,9 +260,10 @@ Status TableBuilder::Finish() {
     WriteBlock(&r->index_block, &index_block_handle);
   }
 
+  // Footer
   if (ok()) {
     Footer footer;
-    // footer.set_metaindex_handle(metaindex_block_handle);
+    footer.set_metaindex_handle(metaindex_block_handle);
     footer.set_index_handle(index_block_handle);
     std::string footer_encoding;
     footer.EncodeTo(&footer_encoding);
