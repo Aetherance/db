@@ -8,6 +8,7 @@
 #include <sstream>
 #include <string>
 
+#include "slice.h"
 #include "util/coding.h"
 #include "util/logging.h"
 
@@ -81,7 +82,21 @@ void InternalKeyComparator::FindShortSuccessor(std::string* key) const {
   // TODO: implement me
 }
 
-// TODO: add InternalFilterPolicy
+const char* InternalFilterPolicy::Name() const {
+  return user_policy_->Name();
+}
+
+void InternalFilterPolicy::CreateFilter(const Slice* keys, int n, std::string* dst) const {
+  Slice* mkeys = const_cast<Slice*>(keys);
+  for (int i = 0; i < n; i++) {
+    mkeys[i] = ExtractUserKey(keys[i]);
+  }
+  user_policy_->CreateFilter(keys, n, dst);
+}
+
+bool InternalFilterPolicy::KeyMayMatch(const Slice& key, const Slice& f) const {
+  return user_policy_->KeyMayMatch(ExtractUserKey(key), f);
+}
 
 LookupKey::LookupKey(const Slice& user_key, SequenceNumber s) {
   size_t usize = user_key.Size();
