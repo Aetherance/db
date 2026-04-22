@@ -50,7 +50,15 @@ public:
   }
 
   void FindShortSuccessor(std::string* key) const override {
-    // TODO: implement me
+    size_t n = key->size();
+    for (size_t i = 0; i < n; i++) {
+      const uint8_t byte = (*key)[i];
+      if (byte != static_cast<uint8_t>(0xff)) {
+        (*key)[i] = byte + 1;
+        key->resize(i + 1);
+        return;
+      }
+    }
   }
 };
 }  // namespace
