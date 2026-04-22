@@ -79,7 +79,14 @@ void InternalKeyComparator::FindShortestSeparator(std::string* start, const Slic
 }
 
 void InternalKeyComparator::FindShortSuccessor(std::string* key) const {
-  // TODO: implement me
+  Slice user_key = ExtractUserKey(*key);
+  std::string tmp(user_key.Data(), user_key.Size());
+  user_comparator_->FindShortSuccessor(&tmp);
+  if (tmp.size() < user_key.Size() && user_comparator_->Compare(user_key, tmp) < 0) {
+    PutFixed64(&tmp, PackSequenceAndType(kMaxSequenceNumber, kValueTypeForSeek));
+    assert(this->Compare(*key, tmp) < 0);
+    key->swap(tmp);
+  }
 }
 
 const char* InternalFilterPolicy::Name() const {
