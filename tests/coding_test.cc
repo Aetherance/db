@@ -100,4 +100,38 @@ TEST(CodingTest, TruncatedVarintDoesNotDecode) {
   EXPECT_EQ(encoded.size(), input.Size());
 }
 
+TEST(CodingTest, TruncatedVarint64DoesNotDecode) {
+  std::string encoded(9, static_cast<char>(0x80));
+  Slice input(encoded);
+  uint64_t decoded = 99;
+
+  EXPECT_FALSE(GetVarint64(&input, &decoded));
+  EXPECT_EQ(99U, decoded);
+  EXPECT_EQ(encoded.size(), input.Size());
+}
+
+TEST(CodingTest, OverflowVarint64DoesNotDecode) {
+  std::string encoded(9, static_cast<char>(0x80));
+  encoded.push_back(static_cast<char>(0x02));
+
+  Slice input(encoded);
+  uint64_t decoded = 7;
+
+  EXPECT_FALSE(GetVarint64(&input, &decoded));
+  EXPECT_EQ(7U, decoded);
+  EXPECT_EQ(encoded.size(), input.Size());
+}
+
+TEST(CodingTest, LengthPrefixedSliceRejectsTruncatedPayload) {
+  std::string encoded;
+  PutVarint32(&encoded, 5);
+  encoded.append("abc");
+
+  Slice input(encoded);
+  Slice result("unchanged");
+
+  EXPECT_FALSE(GetLengthPrefixedSlice(&input, &result));
+  EXPECT_EQ("unchanged", result.ToString());
+}
+
 }  // namespace db

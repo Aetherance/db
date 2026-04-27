@@ -92,5 +92,44 @@ TEST(DbFormatTest, LookupKeySupportsHeapAllocatedUserKeys) {
   EXPECT_EQ(kTypeValue, decoded.type);
 }
 
+TEST(DbFormatTest, InternalKeyComparatorFindShortestSeparatorUsesUserComparator) {
+  InternalKeyComparator comparator(BytewiseComparator());
+  const std::string limit = InternalKey("alpha3", 90, kTypeValue).Encode().ToString();
+  std::string start = InternalKey("alpha1zz", 100, kTypeValue).Encode().ToString();
+  const std::string original = start;
+
+  comparator.FindShortestSeparator(&start, limit);
+
+  ParsedInternalKey parsed;
+  ASSERT_TRUE(ParseInternalKey(start, &parsed));
+  EXPECT_EQ("alpha2", parsed.user_key.ToString());
+  EXPECT_EQ(kMaxSequenceNumber, parsed.sequence);
+  EXPECT_EQ(kTypeValue, parsed.type);
+  EXPECT_LT(comparator.Compare(original, start), 0);
+  EXPECT_LT(comparator.Compare(start, limit), 0);
+}
+
+TEST(DbFormatTest, InternalKeyComparatorFindShortSuccessorUsesUserComparator) {
+  InternalKeyComparator comparator(BytewiseComparator());
+  std::string key = InternalKey("bravo", 100, kTypeDeletion).Encode().ToString();
+  const std::string original = key;
+
+  comparator.FindShortSuccessor(&key);
+
+  ParsedInternalKey parsed;
+  ASSERT_TRUE(ParseInternalKey(key, &parsed));
+  EXPECT_EQ("c", parsed.user_key.ToString());
+  EXPECT_EQ(kMaxSequenceNumber, parsed.sequence);
+  EXPECT_EQ(kTypeValue, parsed.type);
+  EXPECT_LT(comparator.Compare(original, key), 0);
+}
+
+TEST(DbFormatTest, InternalKeyDebugStringMarksBadEncodings) {
+  InternalKey key;
+  ASSERT_TRUE(key.DecodeFrom(Slice("bad", 3)));
+
+  EXPECT_EQ("(bad)bad", key.DebugString());
+}
+
 }  // namespace
 }  // namespace db
