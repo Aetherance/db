@@ -261,7 +261,8 @@ TEST(EnvTest, SequentialAndRandomAccessFilesReadExpectedRanges) {
   ASSERT_TRUE(sequential->Read(3, &sequential_result, sequential_scratch).Ok());
   EXPECT_EQ("abc", sequential_result.ToString());
   ASSERT_TRUE(sequential->Skip(1).Ok());
-  ASSERT_TRUE(sequential->Read(sizeof(sequential_scratch), &sequential_result, sequential_scratch).Ok());
+  ASSERT_TRUE(
+      sequential->Read(sizeof(sequential_scratch), &sequential_result, sequential_scratch).Ok());
   EXPECT_EQ("ef", sequential_result.ToString());
   delete sequential;
 
