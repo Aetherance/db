@@ -145,5 +145,42 @@ TEST_F(MemTableTest, IteratorSeekUsesInternalKeys) {
   EXPECT_EQ("v90", iter->Value().ToString());
 }
 
+TEST_F(MemTableTest, ApproximateMemoryUsageGrowsAfterWrites) {
+  const size_t before = table_->ApproximateMemoryUsage();
+
+  const std::string large_value(5000, 'x');
+  Add(100, kTypeValue, "alpha", large_value);
+
+  EXPECT_GT(table_->ApproximateMemoryUsage(), before);
+}
+
+TEST_F(MemTableTest, IteratorSupportsSeekToLastPrevAndStatus) {
+  Add(100, kTypeValue, "alpha", "one");
+  Add(95, kTypeValue, "beta", "two");
+  Add(90, kTypeValue, "beta", "old-two");
+
+  std::unique_ptr<Iterator> iter(table_->NewIterator());
+  iter->SeekToLast();
+  ASSERT_TRUE(iter->Valid());
+  EXPECT_TRUE(iter->GetStatus().Ok());
+
+  ParsedInternalKey parsed = ParseKey(iter->Key());
+  EXPECT_EQ("beta", parsed.user_key.ToString());
+  EXPECT_EQ(90, parsed.sequence);
+  EXPECT_EQ("old-two", iter->Value().ToString());
+
+  iter->Prev();
+  ASSERT_TRUE(iter->Valid());
+  parsed = ParseKey(iter->Key());
+  EXPECT_EQ("beta", parsed.user_key.ToString());
+  EXPECT_EQ(95, parsed.sequence);
+
+  iter->Prev();
+  ASSERT_TRUE(iter->Valid());
+  parsed = ParseKey(iter->Key());
+  EXPECT_EQ("alpha", parsed.user_key.ToString());
+  EXPECT_EQ(100, parsed.sequence);
+}
+
 }  // namespace
 }  // namespace db

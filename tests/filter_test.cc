@@ -111,5 +111,49 @@ TEST(FilterTest, FilterBlockReaderTreatsCorruptContentsConservatively) {
   EXPECT_TRUE(reader.KeyMayMatch(0, "alpha"));
 }
 
+TEST(FilterTest, FilterBlockBuilderFinishesEmptyBlocksWithMinimalEncoding) {
+  TestFilterPolicy policy;
+  FilterBlockBuilder builder(&policy);
+
+  const Slice contents = builder.Finish();
+
+  ASSERT_EQ(5U, contents.Size());
+  EXPECT_EQ(0U, DecodeFixed32(contents.Data()));
+  EXPECT_EQ(11U, static_cast<unsigned char>(contents[4]));
+
+  FilterBlockReader reader(&policy, contents);
+  EXPECT_TRUE(reader.KeyMayMatch(0, "anything"));
+}
+
+TEST(FilterTest, FilterBlockBuilderWritesOffsetsForEachGeneratedFilter) {
+  constexpr uint64_t kFilterBase = 1ULL << 11;
+
+  TestFilterPolicy policy;
+  FilterBlockBuilder builder(&policy);
+  builder.StartBlock(0);
+  builder.AddKey("alpha");
+  builder.AddKey("beta");
+  builder.StartBlock(kFilterBase);
+  builder.AddKey("gamma");
+
+  const Slice contents = builder.Finish();
+  const uint32_t array_offset = DecodeFixed32(contents.Data() + contents.Size() - 5);
+  const uint32_t first_offset = DecodeFixed32(contents.Data() + array_offset);
+  const uint32_t second_offset = DecodeFixed32(contents.Data() + array_offset + 4);
+
+  EXPECT_EQ(0U, first_offset);
+  EXPECT_LT(first_offset, second_offset);
+  EXPECT_LT(second_offset, array_offset);
+
+  const Slice first_filter(contents.Data() + first_offset, second_offset - first_offset);
+  EXPECT_TRUE(policy.KeyMayMatch("alpha", first_filter));
+  EXPECT_TRUE(policy.KeyMayMatch("beta", first_filter));
+  EXPECT_FALSE(policy.KeyMayMatch("gamma", first_filter));
+
+  const Slice second_filter(contents.Data() + second_offset, array_offset - second_offset);
+  EXPECT_TRUE(policy.KeyMayMatch("gamma", second_filter));
+  EXPECT_FALSE(policy.KeyMayMatch("alpha", second_filter));
+}
+
 }  // namespace
 }  // namespace db
