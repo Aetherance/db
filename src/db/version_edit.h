@@ -11,10 +11,9 @@ namespace db {
 class VersionSet;
 
 struct FileMetaData {
-  FileMetaData() : refs(0), allowed_seeks(1 << 30), file_size(0) {}
+  FileMetaData() : refs(0), file_size(0) {}
 
   int refs;
-  int allowed_seeks;
   uint64_t number;
   uint64_t file_size;
   InternalKey smallest;
@@ -51,10 +50,6 @@ public:
     has_last_sequence_ = true;
     last_sequence_ = seq;
   }
-  void SetCompactPointer(int level, const InternalKey& key) {
-    compact_pointers_.push_back(std::make_pair(level, key));
-  }
-
   void AddFile(int level, uint64_t file, uint64_t file_size, const InternalKey& smallest,
                const InternalKey& largest) {
     FileMetaData f;
@@ -91,7 +86,6 @@ private:
   bool has_next_file_number_;
   bool has_last_sequence_;
 
-  std::vector<std::pair<int, InternalKey>> compact_pointers_;
   DeletedFileSet deleted_files_;
 
   // level to sst

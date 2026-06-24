@@ -25,7 +25,6 @@ void VersionEdit::Clear() {
   has_prev_log_number_ = false;
   has_next_file_number_ = false;
   has_last_sequence_ = false;
-  compact_pointers_.clear();
   deleted_files_.clear();
   new_files_.clear();
 }
@@ -50,12 +49,6 @@ void VersionEdit::EncodeTo(std::string* dst) const {
   if (has_last_sequence_) {
     PutVarint32(dst, kLastSequence);
     PutVarint64(dst, last_sequence_);
-  }
-
-  for (size_t i = 0; i < compact_pointers_.size(); i++) {
-    PutVarint32(dst, kCompactPointer);
-    PutVarint32(dst, compact_pointers_[i].first);  // level
-    PutLengthPrefixedSlice(dst, compact_pointers_[i].second.Encode());
   }
 
   for (const auto& deleted_file_kvp : deleted_files_) {
@@ -152,7 +145,9 @@ Status VersionEdit::DecodeFrom(const Slice& src) {
 
       case kCompactPointer:
         if (GetLevel(&input, &level) && GetInternalKey(&input, &key)) {
-          compact_pointers_.push_back(std::make_pair(level, key));
+          // Older MANIFEST files may contain LevelDB's compaction cursor. The
+          // simplified picker is deterministic and does not need the cursor,
+          // but accepting the record keeps existing databases readable.
         } else {
           msg = "compaction pointer";
         }
@@ -215,12 +210,6 @@ std::string VersionEdit::DebugString() const {
   if (has_last_sequence_) {
     r.append("\n  LastSeq: ");
     AppendNumberTo(&r, last_sequence_);
-  }
-  for (size_t i = 0; i < compact_pointers_.size(); i++) {
-    r.append("\n  CompactPointer: ");
-    AppendNumberTo(&r, compact_pointers_[i].first);
-    r.append(" ");
-    r.append(compact_pointers_[i].second.DebugString());
   }
   for (const auto& deleted_files_kvp : deleted_files_) {
     r.append("\n  RemoveFile: ");

@@ -6,7 +6,6 @@
 #include "db/dbformat.h"
 #include "db/version_edit.h"
 #include "options.h"
-#include "port.h"
 
 namespace db {
 
@@ -16,8 +15,6 @@ class Writer;
 
 class Compaction;
 class Iterator;
-class MemTable;
-class TableBuilder;
 class TableCache;
 class Version;
 class VersionSet;
@@ -32,18 +29,9 @@ bool SomeFileOverlapsRange(const InternalKeyComparator& icmp, bool disjoint_sort
 
 class Version {
 public:
-  struct GetStats {
-    FileMetaData* seek_file;
-    int seek_file_level;
-  };
-
   void AddIterators(const ReadOptions&, std::vector<Iterator*>* iters);
 
-  Status Get(const ReadOptions&, const LookupKey& key, std::string* val, GetStats* stats);
-
-  bool UpdateStats(const GetStats& stats);
-
-  bool RecordReadSample(Slice key);
+  Status Get(const ReadOptions&, const LookupKey& key, std::string* val);
 
   void Ref();
   void Unref();
@@ -53,16 +41,9 @@ public:
 
   bool OverlapInLevel(int level, const Slice* smallest_user_key, const Slice* largest_user_key);
 
-  int PickLevelForMemTableOutput(const Slice& smallest_user_key, const Slice& largest_user_key);
-
-  int NumFiles(int level) const {
-    return files_[level].size();
-  }
-
   std::string DebugString() const;
 
 private:
-  friend class Compaction;
   friend class VersionSet;
 
   class LevelFileNumIterator;
@@ -72,8 +53,6 @@ private:
         next_(this),
         prev_(this),
         refs_(0),
-        file_to_compact_(nullptr),
-        file_to_compact_level_(-1),
         compaction_score_(-1),
         compaction_level_(-1) {}
 
@@ -94,9 +73,6 @@ private:
 
   std::vector<FileMetaData*> files_[config::kNumLevels];
 
-  FileMetaData* file_to_compact_;
-  int file_to_compact_level_;
-
   double compaction_score_;
   int compaction_level_;
 };
@@ -110,31 +86,19 @@ public:
 
   ~VersionSet();
 
-  Status LogAndApply(VersionEdit* edit, port::Mutex* mu) EXCLUSIVE_LOCKS_REQUIRED(mu);
+  Status LogAndApply(VersionEdit* edit);
 
-  Status Recover(bool* save_manifest);
+  Status Recover();
 
   Version* current() const {
     return current_;
-  }
-
-  uint64_t ManifestFileNumber() const {
-    return manifest_file_number_;
   }
 
   uint64_t NewFileNumber() {
     return next_file_number_++;
   }
 
-  void ReuseFileNumber(uint64_t file_number) {
-    if (next_file_number_ == file_number + 1) {
-      next_file_number_ = file_number;
-    }
-  }
-
   int NumLevelFiles(int level) const;
-
-  int64_t NumLevelBytes(int level) const;
 
   uint64_t LastSequence() const {
     return last_sequence_;
@@ -159,28 +123,19 @@ public:
 
   Compaction* CompactRange(int level, const InternalKey* begin, const InternalKey* end);
 
-  int64_t MaxNextLevelOverlappingBytes();
-
   Iterator* MakeInputIterator(Compaction* c);
 
   bool NeedsCompaction() const {
-    Version* v = current_;
-    return (v->compaction_score_ >= 1) || (v->file_to_compact_ != nullptr);
+    return current_->compaction_score_ >= 1;
   }
 
   void AddLiveFiles(std::set<uint64_t>* live);
 
   uint64_t ApproximateOffsetOf(Version* v, const InternalKey& key);
 
-  struct LevelSummaryStorage {
-    char buffer[100];
-  };
-  const char* LevelSummary(LevelSummaryStorage* scratch) const;
-
 private:
   class Builder;
 
-  friend class Compaction;
   friend class Version;
 
   bool ReuseManifest(const std::string& dscname, const std::string& dscbase);
@@ -189,10 +144,6 @@ private:
 
   void GetRange(const std::vector<FileMetaData*>& inputs, InternalKey* smallest,
                 InternalKey* largest);
-
-  void GetRange2(const std::vector<FileMetaData*>& inputs1,
-                 const std::vector<FileMetaData*>& inputs2, InternalKey* smallest,
-                 InternalKey* largest);
 
   void SetupOtherInputs(Compaction* c);
 
@@ -215,8 +166,6 @@ private:
   log::Writer* descriptor_log_;
   Version dummy_versions_;
   Version* current_;
-
-  std::string compact_pointer_[config::kNumLevels];
 };
 
 class Compaction {
@@ -239,39 +188,20 @@ public:
     return inputs_[which][i];
   }
 
-  uint64_t MaxOutputFileSize() const {
-    return max_output_file_size_;
-  }
-
   bool IsTrivialMove() const;
 
   void AddInputDeletions(VersionEdit* edit);
 
-  bool IsBaseLevelForKey(const Slice& user_key);
-
-  bool ShouldStopBefore(const Slice& internal_key);
-
-  void ReleaseInputs();
-
 private:
-  friend class Version;
   friend class VersionSet;
 
-  Compaction(const Options* options, int level);
+  explicit Compaction(int level);
 
   int level_;
-  uint64_t max_output_file_size_;
   Version* input_version_;
   VersionEdit edit_;
 
   std::vector<FileMetaData*> inputs_[2];
-
-  std::vector<FileMetaData*> grandparents_;
-  size_t grandparent_index_;
-  bool seen_key_;
-  int64_t overlapped_bytes_;
-
-  size_t level_ptrs_[config::kNumLevels];
 };
 
 }  // namespace db
