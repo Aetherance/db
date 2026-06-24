@@ -54,8 +54,3 @@
 - [ ] `version_set.cc` — PickCompaction() (level-0 size ratio + level-N size ratio)
 - [ ] `db_impl.cc` — DoCompactionWork(): open inputs → MergingIterator → BuildTable → install edit
 - [ ] `db_impl.cc` — BackgroundCompaction() main loop
-
-## Phase 8 — Utilities
-- [ ] `src/db/dumpfile.cc` + `include/dumpfile.h` — dump SSTable contents for debugging
-- [ ] `src/db/repair.cc` — RepairDB(): recover as much data as possible from corrupted DB
-- [ ] `src/db/c.cc` + `include/c.h` — C language bindings (optional)
