@@ -37,7 +37,7 @@
 - [x] `src/db/version_set.h/cc` — version tree, compaction picking, MANIFEST I/O
 
 ## Phase 5 — Read Path
-- [ ] `include/db.h` — public DB interface (Open / Get / Put / Delete / Write / NewIterator / GetSnapshot / ReleaseSnapshot / CompactRange / DestroyDB / RepairDB / GetProperty / GetApproximateSizes)
+- [ ] `include/db.h` — public DB interface (Open / Get / Put / Delete / Write / NewIterator / GetSnapshot / ReleaseSnapshot / CompactRange / DestroyDB / GetProperty / GetApproximateSizes)
 - [ ] `src/db/db_iter.h/cc` — DBIter: merge memtable + SSTable with snapshot isolation
 - [ ] DBImpl::Get() — check memtable → check immutable memtable → check SST levels
 
