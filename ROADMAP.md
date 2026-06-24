@@ -37,20 +37,19 @@
 - [x] `src/db/version_set.h/cc` — version tree, compaction picking, MANIFEST I/O
 
 ## Phase 5 — Read Path
-- [ ] `include/db.h` — public DB interface (Open / Get / Put / Delete / Write / NewIterator / GetSnapshot / ReleaseSnapshot / CompactRange / DestroyDB / GetProperty / GetApproximateSizes)
-- [ ] `src/db/db_iter.h/cc` — DBIter: merge memtable + SSTable with snapshot isolation
-- [ ] DBImpl::Get() — check memtable → check immutable memtable → check SST levels
+- [x] `include/db.h` — public DB interface (Open / Get / Put / Delete / Write / NewIterator / GetSnapshot / ReleaseSnapshot / CompactRange / DestroyDB / GetProperty / GetApproximateSizes)
+- [x] `src/db/db_iter.h/cc` — DBIter: merge memtable + SSTable with snapshot isolation
+- [x] DBImpl::Get() — check memtable → check immutable memtable → check SST levels
 
 ## Phase 6 — Write Path
-- [ ] `src/db/builder.h/cc` — BuildTable(): iterator → SSTable (uses existing TableBuilder)
-- [ ] `src/db/db_impl.h/cc`:
-  - [ ] Open() / Recover(): read CURRENT → MANIFEST → replay WAL → rebuild memtable
-  - [ ] Put() / Delete(): append to WAL → insert into memtable
-  - [ ] Write() (batch): group commit, WAL + memtable
-  - [ ] MemTable flush: freezing → BuildTable → install new version
+- [x] `src/db/builder.h/cc` — BuildTable(): iterator → SSTable (uses existing TableBuilder)
+- [x] `src/db/db_impl.h/cc`:
+  - [x] Open() / Recover(): read CURRENT → MANIFEST → replay WAL → rebuild memtable
+  - [x] Put() / Delete(): append to WAL → insert into memtable
+  - [x] Write() (batch): WAL → memtable
+  - [x] MemTable flush: synchronous BuildTable → install new version
 
 ## Phase 7 — Compaction
-- [ ] `db_impl.cc` — MaybeScheduleCompaction()
-- [ ] `version_set.cc` — PickCompaction() (level-0 size ratio + level-N size ratio)
-- [ ] `db_impl.cc` — DoCompactionWork(): open inputs → MergingIterator → BuildTable → install edit
-- [ ] `db_impl.cc` — BackgroundCompaction() main loop
+- [ ] `db_impl.cc` — background scheduling (intentionally omitted from the minimal DBImpl)
+- [x] `version_set.cc` — PickCompaction() (level-0 size ratio + level-N size ratio)
+- [x] `db_impl.cc` — minimal synchronous compaction execution
