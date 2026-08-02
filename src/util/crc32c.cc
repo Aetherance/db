@@ -4,6 +4,12 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "port.h"
+
+#if HAVE_CRC32C
+#include <crc32c/crc32c.h>
+#endif  // HAVE_CRC32C
+
 namespace db {
 namespace crc32c {
 namespace {
@@ -26,6 +32,9 @@ uint32_t ExtendByte(uint32_t crc, uint8_t byte) {
 }  // namespace
 
 uint32_t Extend(uint32_t init_crc, const char* data, size_t n) {
+#if HAVE_CRC32C
+  return ::crc32c::Extend(init_crc, reinterpret_cast<const uint8_t*>(data), n);
+#else
   uint32_t crc = ~init_crc;
   const auto* bytes = reinterpret_cast<const uint8_t*>(data);
 
@@ -34,6 +43,7 @@ uint32_t Extend(uint32_t init_crc, const char* data, size_t n) {
   }
 
   return ~crc;
+#endif  // HAVE_CRC32C
 }
 
 uint32_t Value(const char* data, size_t n) {
