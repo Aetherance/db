@@ -3,8 +3,18 @@ SHELL := bash
 LEVELDB_DIR ?= ../leveldb
 LEVELDB_BUILD_DIR ?= build-release/leveldb
 BENCHMARK_ARGS ?= --benchmarks=fillseq,fillrandom,readseq,readrandom,stats --num=100000 --reads=100000 --compression=0
-LEVELDB_BENCHMARK_DB ?= /tmp/leveldb-benchmark
-TALUSDB_BENCHMARK_DB ?= /tmp/talusdb-benchmark
+BENCHMARK_STORAGE ?= memory
+
+ifeq ($(BENCHMARK_STORAGE),memory)
+BENCHMARK_ROOT ?= /tmp
+else ifeq ($(BENCHMARK_STORAGE),disk)
+BENCHMARK_ROOT ?= /var/tmp
+else
+$(error BENCHMARK_STORAGE must be either memory or disk)
+endif
+
+LEVELDB_BENCHMARK_DB ?= $(BENCHMARK_ROOT)/leveldb-benchmark
+TALUSDB_BENCHMARK_DB ?= $(BENCHMARK_ROOT)/talusdb-benchmark
 
 .PHONY: help configure build benchmark test ci-test fmt fmt-check check
 
@@ -13,6 +23,7 @@ help:
 	@echo "  make configure  - Configure CMake with the dev preset"
 	@echo "  make build      - Build with the dev preset"
 	@echo "  make benchmark  - Compare LevelDB and TalusDB in Release mode"
+	@echo "                    Set BENCHMARK_STORAGE=disk to use /var/tmp"
 	@echo "  make test       - Run gtest binaries directly"
 	@echo "  make ci-test    - Run tests via CTest with the dev preset"
 	@echo "  make fmt        - Format C/C++ sources with clang-format"
