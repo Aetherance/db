@@ -1,5 +1,4 @@
-#ifndef DB_PORT_H_
-#define DB_PORT_H_
+#pragma once
 
 #ifndef HAVE_CRC32C
 #define HAVE_CRC32C 0
@@ -242,5 +241,3 @@ inline bool GetHeapProfile(void (*func)(void*, const char*, int), void* arg) {
 
 }  // namespace port
 }  // namespace db
-
-#endif  // DB_PORT_H_

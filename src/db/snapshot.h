@@ -1,3 +1,5 @@
+#pragma once
+
 #include "db.h"
 #include "db/dbformat.h"
 
