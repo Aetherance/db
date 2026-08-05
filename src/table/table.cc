@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <string>
 
+#include "cache.h"
 #include "comparator.h"
 #include "env.h"
 #include "filter_block.h"
@@ -12,11 +13,14 @@
 #include "slice.h"
 #include "status.h"
 #include "two_level_iterator.h"
+#include "util/coding.h"
 
 namespace db {
 struct Table::Rep {
   ~Rep() {
     delete filter;
+    delete[] filter_data;
+    delete index_block;
   }
 
   Options options;
@@ -65,7 +69,7 @@ Status Table::Open(const Options& options, RandomAccessFile* file, uint64_t size
     rep->file = file;
     rep->metaindex_handle = footer.metaindex_handle();
     rep->index_block = index_block;
-    rep->cache_id = 0;  // TODO: cache
+    rep->cache_id = options.block_cache != nullptr ? options.block_cache->NewId() : 0;
     rep->filter_data = nullptr;
     rep->filter = nullptr;
     *table = new Table(rep);
@@ -128,30 +132,62 @@ Table::~Table() {
 }
 
 static void DeleteBlock(void* arg, void* ignored) {
+  (void)ignored;
   delete reinterpret_cast<Block*>(arg);
+}
+
+static void DeleteCachedBlock(const Slice& key, void* value) {
+  (void)key;
+  delete reinterpret_cast<Block*>(value);
+}
+
+static void ReleaseBlock(void* arg, void* handle) {
+  Cache* cache = reinterpret_cast<Cache*>(arg);
+  cache->Release(reinterpret_cast<Cache::Handle*>(handle));
 }
 
 Iterator* Table::BlockReader(void* arg, const ReadOptions& options, const Slice& index_value) {
   Table* table = reinterpret_cast<Table*>(arg);
   Block* block = nullptr;
+  Cache* block_cache = table->rep_->options.block_cache;
+  Cache::Handle* cache_handle = nullptr;
 
   BlockHandle handle;
   Slice input = index_value;
   Status s = handle.DecodeFrom(&input);
 
   if (s.Ok()) {
-    BlockContents contents;
-    // TODO: implement Cache
-    s = ReadBlock(table->rep_->file, options, handle, &contents);
-    if (s.Ok()) {
-      block = new Block(contents);
+    char cache_key_buffer[16];
+    Slice cache_key;
+    if (block_cache != nullptr) {
+      EncodeFixed64(cache_key_buffer, table->rep_->cache_id);
+      EncodeFixed64(cache_key_buffer + 8, handle.offset());
+      cache_key = Slice(cache_key_buffer, sizeof(cache_key_buffer));
+      cache_handle = block_cache->Lookup(cache_key);
+    }
+
+    if (cache_handle != nullptr) {
+      block = reinterpret_cast<Block*>(block_cache->Value(cache_handle));
+    } else {
+      BlockContents contents;
+      s = ReadBlock(table->rep_->file, options, handle, &contents);
+      if (s.Ok()) {
+        block = new Block(contents);
+        if (contents.cachable && options.fill_cache && block_cache != nullptr) {
+          cache_handle = block_cache->Insert(cache_key, block, block->size(), &DeleteCachedBlock);
+        }
+      }
     }
   }
 
   Iterator* iter;
   if (block != nullptr) {
     iter = block->NewIterator(table->rep_->options.comparator);
-    iter->RegisterCleanup(&DeleteBlock, block, nullptr);
+    if (cache_handle == nullptr) {
+      iter->RegisterCleanup(&DeleteBlock, block, nullptr);
+    } else {
+      iter->RegisterCleanup(&ReleaseBlock, block_cache, cache_handle);
+    }
   } else {
     iter = NewErrorIterator(s);
   }
