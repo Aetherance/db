@@ -45,11 +45,12 @@
 - [x] `src/db/builder.h/cc` — BuildTable(): iterator → SSTable (uses existing TableBuilder)
 - [x] `src/db/db_impl.h/cc`:
   - [x] Open() / Recover(): read CURRENT → MANIFEST → replay WAL → rebuild memtable
+  - [x] Hold `LOCK` for the open lifetime and coordinate `DestroyDB`
   - [x] Put() / Delete(): append to WAL → insert into memtable
   - [x] Write() (batch): WAL → memtable
-  - [x] MemTable flush: synchronous BuildTable → install new version
+  - [x] MemTable flush: rotate WAL → immutable memtable → background BuildTable → install version
 
 ## Phase 7 — Compaction
-- [ ] `db_impl.cc` — background scheduling (intentionally omitted from the minimal DBImpl)
+- [x] `db_impl.cc` — single immutable memtable flushed through `Env::Schedule`
 - [x] `version_set.cc` — PickCompaction() (level-0 size ratio + level-N size ratio)
-- [x] `db_impl.cc` — minimal synchronous compaction execution
+- [x] `db_impl.cc` — flush-triggered background and manual synchronous compaction execution

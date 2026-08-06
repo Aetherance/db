@@ -42,16 +42,23 @@ int TableCacheSize(const Options& options) {
 }
 
 struct IterState {
-  IterState(MemTable* memtable, Version* version) : mem(memtable), current(version) {}
+  IterState(std::mutex* db_mutex, MemTable* memtable, MemTable* immutable, Version* version)
+      : mutex(db_mutex), mem(memtable), imm(immutable), current(version) {}
 
+  std::mutex* const mutex;
   MemTable* const mem;
+  MemTable* const imm;
   Version* const current;
 };
 
 void CleanupIteratorState(void* arg1, void* arg2) {
   (void)arg2;
   auto* state = static_cast<IterState*>(arg1);
+  std::lock_guard<std::mutex> lock(*state->mutex);
   state->mem->Unref();
+  if (state->imm != nullptr) {
+    state->imm->Unref();
+  }
   state->current->Unref();
   delete state;
 }
@@ -78,22 +85,41 @@ DBImpl::DBImpl(const Options& raw_options, const std::string& dbname)
       owns_cache_(options_.block_cache != raw_options.block_cache),
       dbname_(dbname),
       table_cache_(new TableCache(dbname_, options_, TableCacheSize(options_))),
+      db_lock_(nullptr),
       mem_(nullptr),
+      imm_(nullptr),
       logfile_(nullptr),
       logfile_number_(0),
+      imm_logfile_number_(0),
       log_(nullptr),
+      background_flush_scheduled_(false),
+      background_error_(Status::OkStatus()),
       versions_(new VersionSet(dbname_, &options_, table_cache_, &internal_comparator_)) {}
 
 DBImpl::~DBImpl() {
+  {
+    std::unique_lock<std::mutex> lock(mutex_);
+    background_work_finished_.wait(lock, [this] { return !background_flush_scheduled_; });
+  }
+
   delete log_;
   delete logfile_;
   if (mem_ != nullptr) {
     mem_->Unref();
   }
+  if (imm_ != nullptr) {
+    imm_->Unref();
+  }
   delete versions_;
   delete table_cache_;
   if (owns_cache_) {
     delete options_.block_cache;
+  }
+  if (db_lock_ != nullptr) {
+    const Status status = env_->UnlockFile(db_lock_);
+    if (!status.Ok()) {
+      Log(options_.info_log, "unlocking database: %s", status.ToString().c_str());
+    }
   }
 }
 
@@ -144,9 +170,14 @@ Status DBImpl::Recover(VersionEdit* edit, std::vector<uint64_t>* recovered_logs)
   Status status;
   if (!env_->FileExists(dbname_)) {
     status = env_->CreateDir(dbname_);
-    if (!status.Ok()) {
+    if (!status.Ok() && !env_->FileExists(dbname_)) {
       return status;
     }
+  }
+
+  status = env_->LockFile(LockFileName(dbname_), &db_lock_);
+  if (!status.Ok()) {
+    return status;
   }
 
   if (!env_->FileExists(CurrentFileName(dbname_))) {
@@ -271,22 +302,15 @@ Status DBImpl::WriteLevel0Table(MemTable* mem, VersionEdit* edit) {
   return status;
 }
 
-Status DBImpl::FlushMemTable() {
-  std::unique_ptr<Iterator> probe(mem_->NewIterator());
-  probe->SeekToFirst();
-  if (!probe->Valid()) {
-    return probe->GetStatus();
-  }
-
-  VersionEdit edit;
-  Status status = WriteLevel0Table(mem_, &edit);
-  if (!status.Ok()) {
-    return status;
-  }
+Status DBImpl::MakeMemTableImmutable() {
+  assert(mem_ != nullptr);
+  assert(imm_ == nullptr);
+  assert(log_ != nullptr);
+  assert(logfile_ != nullptr);
 
   const uint64_t new_log_number = versions_->NewFileNumber();
   WritableFile* raw_file = nullptr;
-  status = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &raw_file);
+  Status status = env_->NewWritableFile(LogFileName(dbname_, new_log_number), &raw_file);
   if (!status.Ok()) {
     return status;
   }
@@ -294,32 +318,126 @@ Status DBImpl::FlushMemTable() {
   std::unique_ptr<WritableFile> new_logfile(raw_file);
   auto new_log = std::make_unique<log::Writer>(new_logfile.get());
   status = new_logfile->Sync();
+  if (status.Ok()) {
+    status = logfile_->Flush();
+  }
+
+  auto* new_mem = new MemTable(internal_comparator_);
+  new_mem->Ref();
+  if (status.Ok()) {
+    VersionEdit edit;
+    edit.SetPrevLogNumber(logfile_number_);
+    edit.SetLogNumber(new_log_number);
+    status = versions_->LogAndApply(&edit);
+  }
+
   if (!status.Ok()) {
+    new_log.reset();
+    new_logfile.reset();
+    new_mem->Unref();
+    env_->RemoveFile(LogFileName(dbname_, new_log_number));
     return status;
   }
 
-  edit.SetPrevLogNumber(0);
-  edit.SetLogNumber(new_log_number);
-  status = versions_->LogAndApply(&edit);
-  if (!status.Ok()) {
-    return status;
-  }
-
-  const uint64_t old_log_number = logfile_number_;
   delete log_;
   delete logfile_;
   log_ = new_log.release();
   logfile_ = new_logfile.release();
+  imm_ = mem_;
+  imm_logfile_number_ = logfile_number_;
+  mem_ = new_mem;
   logfile_number_ = new_log_number;
+  background_flush_scheduled_ = true;
+  return Status::OkStatus();
+}
 
-  mem_->Unref();
-  mem_ = new MemTable(internal_comparator_);
-  mem_->Ref();
-
-  if (old_log_number != 0) {
-    env_->RemoveFile(LogFileName(dbname_, old_log_number));
+Status DBImpl::FlushMemTable() {
+  bool schedule_background_work = false;
+  std::unique_lock<std::mutex> lock(mutex_);
+  background_work_finished_.wait(lock,
+                                 [this] { return imm_ == nullptr || !background_error_.Ok(); });
+  if (!background_error_.Ok()) {
+    return background_error_;
   }
-  return CompactIfNeeded();
+
+  std::unique_ptr<Iterator> probe(mem_->NewIterator());
+  probe->SeekToFirst();
+  if (!probe->Valid()) {
+    return probe->GetStatus();
+  }
+
+  Status status = MakeMemTableImmutable();
+  if (!status.Ok()) {
+    background_error_ = status;
+    return status;
+  }
+  schedule_background_work = true;
+
+  lock.unlock();
+  if (schedule_background_work) {
+    env_->Schedule(&DBImpl::BackgroundWork, this);
+  }
+  lock.lock();
+  background_work_finished_.wait(lock, [this] { return !background_flush_scheduled_; });
+  return background_error_;
+}
+
+void DBImpl::BackgroundWork(void* db) {
+  static_cast<DBImpl*>(db)->BackgroundFlush();
+}
+
+void DBImpl::BackgroundFlush() {
+  FileMetaData meta;
+  MemTable* immutable = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    assert(background_flush_scheduled_);
+    assert(imm_ != nullptr);
+    immutable = imm_;
+    meta.number = versions_->NewFileNumber();
+  }
+
+  Status status;
+  {
+    std::unique_ptr<Iterator> iter(immutable->NewIterator());
+    status = BuildTable(dbname_, env_, options_, table_cache_, iter.get(), &meta);
+  }
+  if (status.Ok() && meta.file_size == 0) {
+    status = Status::Corruption("immutable MemTable produced an empty table");
+  }
+
+  std::unique_lock<std::mutex> lock(mutex_);
+  bool installed = false;
+  if (status.Ok()) {
+    VersionEdit edit;
+    edit.AddFile(0, meta.number, meta.file_size, meta.smallest, meta.largest);
+    edit.SetPrevLogNumber(0);
+    edit.SetLogNumber(logfile_number_);
+    status = versions_->LogAndApply(&edit);
+    installed = status.Ok();
+  }
+
+  if (installed) {
+    const uint64_t obsolete_log_number = imm_logfile_number_;
+    imm_ = nullptr;
+    imm_logfile_number_ = 0;
+    immutable->Unref();
+
+    if (obsolete_log_number != 0) {
+      env_->RemoveFile(LogFileName(dbname_, obsolete_log_number));
+    }
+    status = CompactIfNeeded();
+  } else {
+    table_cache_->Evict(meta.number);
+    env_->RemoveFile(TableFileName(dbname_, meta.number));
+  }
+
+  if (!status.Ok() && background_error_.Ok()) {
+    background_error_ = status;
+  }
+  background_flush_scheduled_ = false;
+  lock.unlock();
+  background_work_finished_.notify_all();
 }
 
 Status DBImpl::RunCompaction(Compaction* compaction) {
@@ -428,6 +546,12 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
   if (updates == nullptr) {
     return Status::InvalidArgument("WriteBatch must not be null");
   }
+
+  bool schedule_background_work = false;
+  std::unique_lock<std::mutex> lock(mutex_);
+  if (!background_error_.Ok()) {
+    return background_error_;
+  }
   assert(mem_ != nullptr);
   assert(log_ != nullptr);
 
@@ -446,19 +570,41 @@ Status DBImpl::Write(const WriteOptions& options, WriteBatch* updates) {
     status = WriteBatchInternal::InsertInto(updates, mem_);
   }
   if (!status.Ok()) {
+    background_error_ = status;
     return status;
   }
 
   if (count > 0) {
     versions_->SetLastSequence(first_sequence + static_cast<SequenceNumber>(count) - 1);
   }
-  if (mem_->ApproximateMemoryUsage() > options_.write_buffer_size) {
-    status = FlushMemTable();
+  while (mem_->ApproximateMemoryUsage() > options_.write_buffer_size) {
+    if (imm_ != nullptr) {
+      background_work_finished_.wait(lock,
+                                     [this] { return imm_ == nullptr || !background_error_.Ok(); });
+      if (!background_error_.Ok()) {
+        return background_error_;
+      }
+      continue;
+    }
+
+    status = MakeMemTableImmutable();
+    if (!status.Ok()) {
+      background_error_ = status;
+      return status;
+    }
+    schedule_background_work = true;
+    break;
   }
-  return status;
+
+  lock.unlock();
+  if (schedule_background_work) {
+    env_->Schedule(&DBImpl::BackgroundWork, this);
+  }
+  return Status::OkStatus();
 }
 
 Status DBImpl::Get(const ReadOptions& options, const Slice& key, std::string* value) {
+  std::lock_guard<std::mutex> lock(mutex_);
   const SequenceNumber sequence =
       options.snapshot != nullptr
           ? static_cast<const SnapshotImpl*>(options.snapshot)->sequence_number()
@@ -468,16 +614,25 @@ Status DBImpl::Get(const ReadOptions& options, const Slice& key, std::string* va
   if (mem_->Get(lookup_key, value, &status)) {
     return status;
   }
+  if (imm_ != nullptr && imm_->Get(lookup_key, value, &status)) {
+    return status;
+  }
 
   return versions_->current()->Get(options, lookup_key, value);
 }
 
 Iterator* DBImpl::NewInternalIterator(const ReadOptions& options, SequenceNumber* latest_sequence) {
+  std::lock_guard<std::mutex> lock(mutex_);
   *latest_sequence = versions_->LastSequence();
 
   std::vector<Iterator*> iterators;
   iterators.push_back(mem_->NewIterator());
   mem_->Ref();
+  MemTable* immutable = imm_;
+  if (immutable != nullptr) {
+    iterators.push_back(immutable->NewIterator());
+    immutable->Ref();
+  }
 
   Version* current = versions_->current();
   current->AddIterators(options, &iterators);
@@ -485,7 +640,8 @@ Iterator* DBImpl::NewInternalIterator(const ReadOptions& options, SequenceNumber
 
   Iterator* result = NewMergingIterator(&internal_comparator_, iterators.data(),
                                         static_cast<int>(iterators.size()));
-  result->RegisterCleanup(CleanupIteratorState, new IterState(mem_, current), nullptr);
+  result->RegisterCleanup(CleanupIteratorState, new IterState(&mutex_, mem_, immutable, current),
+                          nullptr);
   return result;
 }
 
@@ -500,14 +656,17 @@ Iterator* DBImpl::NewIterator(const ReadOptions& options) {
 }
 
 const Snapshot* DBImpl::GetSnapshot() {
+  std::lock_guard<std::mutex> lock(mutex_);
   return snapshots_.New(versions_->LastSequence());
 }
 
 void DBImpl::ReleaseSnapshot(const Snapshot* snapshot) {
+  std::lock_guard<std::mutex> lock(mutex_);
   snapshots_.Delete(static_cast<const SnapshotImpl*>(snapshot));
 }
 
 bool DBImpl::GetProperty(const Slice& property, std::string* value) {
+  std::lock_guard<std::mutex> lock(mutex_);
   value->clear();
   Slice input = property;
   const Slice prefix("db.");
@@ -533,7 +692,10 @@ bool DBImpl::GetProperty(const Slice& property, std::string* value) {
   }
 
   if (input == Slice("approximate-memory-usage")) {
-    const size_t usage = options_.block_cache->TotalCharge() + mem_->ApproximateMemoryUsage();
+    size_t usage = options_.block_cache->TotalCharge() + mem_->ApproximateMemoryUsage();
+    if (imm_ != nullptr) {
+      usage += imm_->ApproximateMemoryUsage();
+    }
     *value = std::to_string(usage);
     return true;
   }
@@ -541,6 +703,7 @@ bool DBImpl::GetProperty(const Slice& property, std::string* value) {
 }
 
 void DBImpl::GetApproximateSizes(const Range* range, int n, uint64_t* sizes) {
+  std::lock_guard<std::mutex> lock(mutex_);
   Version* current = versions_->current();
   for (int i = 0; i < n; ++i) {
     InternalKey start(range[i].start, kMaxSequenceNumber, kValueTypeForSeek);
@@ -554,10 +717,11 @@ void DBImpl::GetApproximateSizes(const Range* range, int n, uint64_t* sizes) {
 void DBImpl::CompactRange(const Slice* begin, const Slice* end) {
   Status status = FlushMemTable();
   if (!status.Ok()) {
-    Log(options_.info_log, "synchronous flush failed: %s", status.ToString().c_str());
+    Log(options_.info_log, "MemTable flush failed: %s", status.ToString().c_str());
     return;
   }
 
+  std::lock_guard<std::mutex> lock(mutex_);
   int max_level_with_files = 1;
   Version* current = versions_->current();
   for (int level = 1; level < config::kNumLevels; ++level) {
@@ -632,18 +796,42 @@ Snapshot::~Snapshot() = default;
 
 Status DestroyDB(const std::string& dbname, const Options& options) {
   Env* env = OptionsEnv(options);
-  std::vector<std::string> filenames;
-  Status status = env->GetChildren(dbname, &filenames);
-  if (!status.Ok()) {
+  if (!env->FileExists(dbname)) {
     return Status::OkStatus();
+  }
+
+  FileLock* db_lock = nullptr;
+  Status status = env->LockFile(LockFileName(dbname), &db_lock);
+  if (!status.Ok()) {
+    return status;
+  }
+
+  std::vector<std::string> filenames;
+  status = env->GetChildren(dbname, &filenames);
+  if (!status.Ok()) {
+    env->UnlockFile(db_lock);
+    return status;
   }
 
   Status result;
   for (const std::string& filename : filenames) {
+    if (filename == "." || filename == ".." || filename == "LOCK") {
+      continue;
+    }
     const Status remove_status = env->RemoveFile(dbname + "/" + filename);
     if (result.Ok() && !remove_status.Ok()) {
       result = remove_status;
     }
+  }
+
+  const Status unlock_status = env->UnlockFile(db_lock);
+  if (result.Ok() && !unlock_status.Ok()) {
+    result = unlock_status;
+  }
+
+  const Status remove_lock_status = env->RemoveFile(LockFileName(dbname));
+  if (result.Ok() && !remove_lock_status.Ok()) {
+    result = remove_lock_status;
   }
   const Status remove_dir_status = env->RemoveDir(dbname);
   if (result.Ok() && !remove_dir_status.Ok()) {

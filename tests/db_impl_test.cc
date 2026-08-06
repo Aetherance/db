@@ -1,6 +1,7 @@
 #include "db/db_impl.h"
 
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <vector>
@@ -21,6 +22,46 @@ std::string MakeDBName(const std::string& name) {
   EXPECT_TRUE(env->GetTestDirectory(&root).Ok());
   return root + "/db-impl-test-" + std::to_string(env->NowMicros()) + "-" + name;
 }
+
+class ManualScheduleEnv : public EnvWrapper {
+public:
+  explicit ManualScheduleEnv(Env* target)
+      : EnvWrapper(target), function_(nullptr), argument_(nullptr) {}
+
+  void Schedule(void (*function)(void*), void* argument) override {
+    std::lock_guard<std::mutex> lock(mutex_);
+    EXPECT_EQ(nullptr, function_);
+    function_ = function;
+    argument_ = argument;
+  }
+
+  bool HasScheduledWork() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return function_ != nullptr;
+  }
+
+  bool RunScheduledWork() {
+    void (*function)(void*) = nullptr;
+    void* argument = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      function = function_;
+      argument = argument_;
+      function_ = nullptr;
+      argument_ = nullptr;
+    }
+    if (function == nullptr) {
+      return false;
+    }
+    function(argument);
+    return true;
+  }
+
+private:
+  mutable std::mutex mutex_;
+  void (*function_)(void*);
+  void* argument_;
+};
 
 class DBImplTest : public ::testing::Test {
 protected:
@@ -143,12 +184,36 @@ TEST_F(DBImplTest, NullWriteBatchIsRejected) {
   EXPECT_EQ(Status::Code::kInvalidArgument, status.GetCode());
 }
 
+TEST_F(DBImplTest, DatabaseLockExcludesOtherOpensAndDestroy) {
+  Open();
+  ASSERT_TRUE(db_->Put(WriteOptions(), "key", "value").Ok());
+  EXPECT_TRUE(options_.env->FileExists(LockFileName(dbname_)));
+
+  DB* second = nullptr;
+  const Status second_open = DB::Open(options_, dbname_, &second);
+  EXPECT_FALSE(second_open.Ok());
+  EXPECT_EQ(nullptr, second);
+
+  const Status destroy_while_open = DestroyDB(dbname_, options_);
+  EXPECT_FALSE(destroy_while_open.Ok());
+
+  std::string value;
+  ASSERT_TRUE(Get("key", &value).Ok());
+  EXPECT_EQ("value", value);
+
+  db_.reset();
+  Open();
+  ASSERT_TRUE(Get("key", &value).Ok());
+  EXPECT_EQ("value", value);
+}
+
 TEST_F(DBImplTest, ForcedMemTableFlushBuildsRecoverableTable) {
   options_.write_buffer_size = 1024;
   Open();
 
   const std::string large_value(70 * 1024, 'x');
   ASSERT_TRUE(db_->Put(WriteOptions(), "large", large_value).Ok());
+  db_->CompactRange(nullptr, nullptr);
 
   std::vector<std::string> children;
   ASSERT_TRUE(options_.env->GetChildren(dbname_, &children).Ok());
@@ -168,7 +233,7 @@ TEST_F(DBImplTest, ForcedMemTableFlushBuildsRecoverableTable) {
   EXPECT_EQ(large_value, value);
 }
 
-TEST_F(DBImplTest, MultipleSynchronousFlushesRemainReadable) {
+TEST_F(DBImplTest, MultipleManualFlushesRemainReadable) {
   Open();
 
   std::vector<std::string> keys;
@@ -190,7 +255,7 @@ TEST_F(DBImplTest, MultipleSynchronousFlushesRemainReadable) {
   }
 }
 
-TEST_F(DBImplTest, FlushTriggerRunsSynchronousCompaction) {
+TEST_F(DBImplTest, FlushTriggerRunsBackgroundCompaction) {
   options_.write_buffer_size = 1024;
   Open();
 
@@ -198,6 +263,7 @@ TEST_F(DBImplTest, FlushTriggerRunsSynchronousCompaction) {
   for (int i = 0; i < config::kL0_CompactionTrigger + 2; ++i) {
     ASSERT_TRUE(db_->Put(WriteOptions(), "key-" + std::to_string(i), value).Ok());
   }
+  db_->CompactRange(nullptr, nullptr);
 
   EXPECT_LT(NumFilesAtLevel(0), config::kL0_CompactionTrigger);
   EXPECT_GT(NumFilesAtLevel(1), 0);
@@ -273,6 +339,56 @@ TEST_F(DBImplTest, IteratorPinsItsVersionFiles) {
   ASSERT_TRUE(db_->Put(WriteOptions(), "other", "value").Ok());
   db_->CompactRange(nullptr, nullptr);
   EXPECT_EQ(0U, TableFiles().count(original_file));
+}
+
+TEST(DBImplAsyncFlushTest, ReadsFromMutableAndImmutableMemTablesWhileFlushIsQueued) {
+  ManualScheduleEnv env(Env::Default());
+  Options options;
+  options.env = &env;
+  options.create_if_missing = true;
+  options.write_buffer_size = 64 * 1024;
+  const std::string dbname = MakeDBName("manual-background-flush");
+  ASSERT_TRUE(DestroyDB(dbname, options).Ok());
+
+  DB* raw_db = nullptr;
+  ASSERT_TRUE(DB::Open(options, dbname, &raw_db).Ok());
+  std::unique_ptr<DB> db(raw_db);
+
+  const std::string large_value(70 * 1024, 'x');
+  ASSERT_TRUE(db->Put(WriteOptions(), "immutable", large_value).Ok());
+  ASSERT_TRUE(env.HasScheduledWork());
+
+  std::string value;
+  ASSERT_TRUE(db->Get(ReadOptions(), "immutable", &value).Ok());
+  EXPECT_EQ(large_value, value);
+
+  ASSERT_TRUE(db->Put(WriteOptions(), "mutable", "new-value").Ok());
+  ASSERT_TRUE(db->Get(ReadOptions(), "mutable", &value).Ok());
+  EXPECT_EQ("new-value", value);
+
+  std::unique_ptr<Iterator> iter(db->NewIterator(ReadOptions()));
+  std::vector<std::string> keys;
+  for (iter->SeekToFirst(); iter->Valid(); iter->Next()) {
+    keys.push_back(iter->Key().ToString());
+  }
+  ASSERT_TRUE(iter->GetStatus().Ok());
+  EXPECT_EQ((std::vector<std::string>{"immutable", "mutable"}), keys);
+  iter.reset();
+
+  ASSERT_TRUE(env.RunScheduledWork());
+  EXPECT_FALSE(env.HasScheduledWork());
+
+  db.reset();
+  options.create_if_missing = false;
+  ASSERT_TRUE(DB::Open(options, dbname, &raw_db).Ok());
+  db.reset(raw_db);
+  ASSERT_TRUE(db->Get(ReadOptions(), "immutable", &value).Ok());
+  EXPECT_EQ(large_value, value);
+  ASSERT_TRUE(db->Get(ReadOptions(), "mutable", &value).Ok());
+  EXPECT_EQ("new-value", value);
+
+  db.reset();
+  ASSERT_TRUE(DestroyDB(dbname, options).Ok());
 }
 
 }  // namespace

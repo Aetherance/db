@@ -7,17 +7,23 @@ An embedded LSM-tree based key-value storage engine implemented in C++, inspired
 ## Architecture
 
 ```
-Write → WAL → MemTable (SkipList)
-                 ↓ synchronous flush
-             Level-0 SSTable → synchronous compaction → Level-1..6
-Read → MemTable → current Version's SSTables
+Write → active WAL + MemTable
+                     ↓ freeze when full
+        previous WAL + immutable MemTable
+                     ↓ Env::Schedule
+             Level-0 SSTable → compaction → Level-1..6
+Read → MemTable → immutable MemTable → current Version's SSTables
 ```
 
-`DBImpl` is intentionally a small, single-threaded assembly of the storage components. It keeps
-WAL recovery, snapshots, iterators, persistent tables, and synchronous compaction, but does not
-implement writer grouping or background work. Flush-triggered and manual compactions run on the
-calling thread. Do not open the same database path more than once or call one DB instance
-concurrently from multiple threads.
+`DBImpl` keeps one active and at most one immutable MemTable. A full active MemTable switches to a
+new WAL, and the immutable MemTable is flushed in the background. Writers wait if both MemTables
+are full. Reads and iterators merge both MemTables with the current Version. Flush-triggered
+compaction runs with the background job; manual compaction waits for that job and runs on the
+calling thread.
+
+An open `DBImpl` holds the database's `LOCK` file until it closes, so another open or `DestroyDB`
+on the same path fails instead of modifying the database concurrently. Calls on one DB instance
+still follow the public API's single-threaded contract; writer grouping is not implemented.
 
 ## Build
 

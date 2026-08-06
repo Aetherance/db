@@ -1,6 +1,8 @@
 #pragma once
 
+#include <condition_variable>
 #include <cstdint>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -17,6 +19,7 @@ class Writer;
 }  // namespace log
 
 class Compaction;
+class FileLock;
 class MemTable;
 class TableCache;
 class VersionEdit;
@@ -27,11 +30,12 @@ class WriteBatch;
 Options PrepareOptions(const InternalKeyComparator* comparator,
                        const InternalFilterPolicy* filter_policy, const Options& source);
 
-// A deliberately small, single-threaded DB implementation.
+// A deliberately small DB implementation with a single immutable MemTable.
 //
 // DBImpl only wires the storage components together:
-//   WriteBatch -> WAL -> MemTable -> L0 table -> synchronous compaction -> VersionSet.
-// It does not provide background work or group commit.
+//   WriteBatch -> WAL -> MemTable -> immutable MemTable -> L0 table -> VersionSet.
+// The public API remains single-threaded, while immutable MemTables are flushed
+// through Env::Schedule. Writer grouping is not implemented.
 class DBImpl : public DB {
 public:
   DBImpl(const Options& options, const std::string& dbname);
@@ -60,7 +64,10 @@ private:
   Status RecoverLogFile(uint64_t log_number, MemTable* mem, SequenceNumber* max_sequence,
                         bool* has_entries);
   Status WriteLevel0Table(MemTable* mem, VersionEdit* edit);
+  Status MakeMemTableImmutable();
   Status FlushMemTable();
+  static void BackgroundWork(void* db);
+  void BackgroundFlush();
   Status CompactIfNeeded();
   Status CompactLevel(int level, const Slice* begin, const Slice* end);
   Status RunCompaction(Compaction* compaction);
@@ -78,10 +85,17 @@ private:
   const bool owns_cache_;
   const std::string dbname_;
   TableCache* const table_cache_;
+  mutable std::mutex mutex_;
+  std::condition_variable background_work_finished_;
+  FileLock* db_lock_;
   MemTable* mem_;
+  MemTable* imm_;
   WritableFile* logfile_;
   uint64_t logfile_number_;
+  uint64_t imm_logfile_number_;
   log::Writer* log_;
+  bool background_flush_scheduled_;
+  Status background_error_;
   SnapshotList snapshots_;
   VersionSet* const versions_;
 };
