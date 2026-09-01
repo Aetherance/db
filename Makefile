@@ -14,7 +14,7 @@ $(error BENCHMARK_STORAGE must be either memory or disk)
 endif
 
 LEVELDB_BENCHMARK_DB ?= $(BENCHMARK_ROOT)/leveldb-benchmark
-TALUSDB_BENCHMARK_DB ?= $(BENCHMARK_ROOT)/talusdb-benchmark
+STRATA_BENCHMARK_DB ?= $(BENCHMARK_ROOT)/strata-benchmark
 
 .PHONY: help configure build benchmark test ci-test fmt fmt-check check
 
@@ -22,7 +22,7 @@ help:
 	@echo "Available targets:"
 	@echo "  make configure  - Configure CMake with the dev preset"
 	@echo "  make build      - Build with the dev preset"
-	@echo "  make benchmark  - Compare LevelDB and TalusDB in Release mode"
+	@echo "  make benchmark  - Compare LevelDB and Strata in Release mode"
 	@echo "                    Set BENCHMARK_STORAGE=disk to use /var/tmp"
 	@echo "  make test       - Run gtest binaries directly"
 	@echo "  make ci-test    - Run tests via CTest with the dev preset"
@@ -55,8 +55,8 @@ benchmark:
 	cmake --build build-release --target db_bench --parallel
 	@printf '\n\n==> LevelDB (baseline)\n\n'
 	"$(LEVELDB_BUILD_DIR)/db_bench" $(BENCHMARK_ARGS) --db="$(LEVELDB_BENCHMARK_DB)"
-	@printf '\n\n==> TalusDB\n\n'
-	./build-release/db_bench $(BENCHMARK_ARGS) --db="$(TALUSDB_BENCHMARK_DB)"
+	@printf '\n\n==> Strata\n\n'
+	./build-release/db_bench $(BENCHMARK_ARGS) --db="$(STRATA_BENCHMARK_DB)"
 	@printf '\n\n'
 
 test: build

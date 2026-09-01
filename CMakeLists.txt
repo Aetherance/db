@@ -16,7 +16,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 option(DB_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
-option(DB_BUILD_BENCHMARKS "Build TalusDB benchmarks" ON)
+option(DB_BUILD_BENCHMARKS "Build Strata benchmarks" ON)
 option(DB_USE_CRC32C "Use google/crc32c when available" ON)
 
 set(DB_INCLUDE_DIR "${PROJECT_SOURCE_DIR}/include")

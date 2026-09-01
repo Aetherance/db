@@ -1,6 +1,6 @@
-# TalusDB benchmark
+# Strata benchmark
 
-`db_bench` is adapted from LevelDB's database benchmark and runs against TalusDB's public API.
+`db_bench` is adapted from LevelDB's database benchmark and runs against Strata's public API.
 It does not require Google Benchmark.
 
 ## Workloads
@@ -18,12 +18,12 @@ Like LevelDB's original benchmark, `fillsync` runs `--num / 1000` operations, `f
 operations.
 
 The LevelDB-only `crc32c`, compression-codec, and heap-profiler microbenchmarks are not included.
-They measure utility implementations rather than TalusDB database operations.
+They measure utility implementations rather than Strata database operations.
 
 ## Build and run
 
-To build LevelDB from `../leveldb`, build TalusDB, and then run the same default workload against
-LevelDB followed by TalusDB:
+To build LevelDB from `../leveldb`, build Strata, and then run the same default workload against
+LevelDB followed by Strata:
 
 ```bash
 make benchmark
@@ -31,14 +31,14 @@ make benchmark
 
 The default comparison runs `fillseq`, `fillrandom`, `readseq`, and `readrandom` with 100,000
 operations, uses separate database directories, and disables compression on both implementations
-because TalusDB does not currently enable Snappy. It can be customized without editing the
+because Strata does not currently enable Snappy. It can be customized without editing the
 Makefile:
 
 ```bash
 make benchmark \
   BENCHMARK_ARGS='--benchmarks=fillseq,fillrandom,readrandom,stats --num=1000000 --reads=1000000' \
   LEVELDB_BENCHMARK_DB=/path/on/disk/leveldb-benchmark \
-  TALUSDB_BENCHMARK_DB=/path/on/disk/talusdb-benchmark
+  STRATA_BENCHMARK_DB=/path/on/disk/strata-benchmark
 ```
 
 Important flags include `--threads`, `--value_size`, `--histogram`, `--compression`,

@@ -39,17 +39,17 @@ make test
 
 ## Benchmark
 
-The `db_bench` target is a TalusDB port of LevelDB's database benchmark. If LevelDB is checked
+The `db_bench` target is a Strata port of LevelDB's database benchmark. If LevelDB is checked
 out at `../leveldb`, the following command builds both Release binaries and runs the same
 sequential-write, random-write, sequential-read, and random-read workload against LevelDB first
-and TalusDB second:
+and Strata second:
 
 ```bash
 make benchmark
 ```
 
 Override `BENCHMARK_ARGS`, `LEVELDB_DIR`, `LEVELDB_BUILD_DIR`, `LEVELDB_BENCHMARK_DB`, or
-`TALUSDB_BENCHMARK_DB` on the `make` command line when needed. Write benchmarks recreate their
+`STRATA_BENCHMARK_DB` on the `make` command line when needed. Write benchmarks recreate their
 separate database directories. Use paths on the same real filesystem instead of `/tmp` when
 measuring storage performance.
 

@@ -2,7 +2,7 @@
 // Use of this source code is governed by the BSD-style license in
 // benchmarks/LICENSE.leveldb.
 //
-// Adapted from LevelDB's benchmarks/db_bench.cc for TalusDB's public API.
+// Adapted from LevelDB's benchmarks/db_bench.cc for Strata's public API.
 
 #include <algorithm>
 #include <array>
@@ -599,7 +599,7 @@ private:
 
   static void PrintEnvironment() {
     const std::time_t now = std::time(nullptr);
-    std::fprintf(stderr, "TalusDB benchmark\n");
+    std::fprintf(stderr, "Strata benchmark\n");
     std::fprintf(stderr, "Date:       %s", std::ctime(&now));
 
 #if defined(__linux__)
@@ -1013,7 +1013,7 @@ int main(int argc, char** argv) {
       std::fprintf(stderr, "test directory error: %s\n", status.ToString().c_str());
       return 1;
     }
-    default_database_path += "/talusdb-bench";
+    default_database_path += "/strata-bench";
     flags_db = default_database_path.c_str();
   }
 
